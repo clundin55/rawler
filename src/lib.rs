@@ -1,43 +1,49 @@
-use regex::Regex;
-use std::collections::{HashSet, VecDeque};
+mod crawl_worker;
+mod print_worker;
+
+use crawl_worker::*;
+use print_worker::*;
+use std::collections::VecDeque;
+use std::sync::mpsc::channel;
+use std::time::Duration;
 use url::Url;
 
-pub async fn crawl(root_url: Url) -> Result<(), Box<dyn std::error::Error>> {
-    let mut url_queue = VecDeque::new();
-    let mut seen_urls: HashSet<Url> = HashSet::new();
+pub type CrawlDepth = u32;
+pub type CrawlError = Box<dyn std::error::Error>;
 
-    url_queue.push_back(root_url.clone());
-    seen_urls.insert(root_url.clone());
+pub async fn crawl(root_url: Url, depth: CrawlDepth, timeout: Duration) -> Result<(), CrawlError> {
+    let root_page = CrawledItem::new(root_url, 0);
+    let mut pages_to_crawl = VecDeque::new();
+    pages_to_crawl.push_back(root_page);
 
-    // Safe to unwrap here since the string is compiled into the binary, a runtime panic would be
-    // very unexpected.
-    // Use a non-greedy match so we capture what is the href value.
-    // Sample capture:
-    // <a href="https://kennethreitz.org" target="_blank"> => https://github.com/requests/httpbin
-    let re = Regex::new("href=\"(.*?)\"").unwrap();
+    let (page_sender, page_receiver) = channel();
+    let (print_sender, print_receiver) = channel();
 
-    while !url_queue.is_empty() {
-        // Safe to return an error, here as the queue should not be empty
-        if let Some(url) = url_queue.pop_front() {
-            if let Ok(body) = reqwest::get(url).await {
-                //println!("body = {:?}", body);
-                for cap in re.captures_iter(&body.text().await?) {
-                    println!("{}", &cap[1]);
-                    if let Ok(new_url) = Url::parse(&format!("{}", &cap[1])) {
-                        url_queue.push_back(new_url.clone());
-                        seen_urls.insert(new_url.clone());
+    // Spawn the printing thread. This thread will need a timeout or else it will fall over before
+    // we start posting print jobs to it.
+    tokio::spawn(async move {
+        print_job(print_receiver, timeout).await;
+    });
+
+    // Keep crawling pages until the depth limit is reached for all paths
+    while !pages_to_crawl.is_empty() {
+        if let Some(page) = pages_to_crawl.pop_front() {
+            if *page.get_depth() < depth {
+                let page_sender = page_sender.clone();
+                let print_sender = print_sender.clone();
+                tokio::spawn(async move {
+                    if let Ok(children) = crawl_job(page.clone(), page_sender).await {
+                        print_sender.send(PrintItem::new(page, children));
                     }
-                }
+                });
             }
         }
-    }
-    Ok(())
-}
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+        // Push new pages back into the queue.
+        page_receiver
+            .recv_timeout(timeout)
+            .and_then(|new_job| Ok(pages_to_crawl.push_back(new_job)))?;
     }
+
+    Ok(())
 }
