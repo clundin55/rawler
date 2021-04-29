@@ -50,7 +50,7 @@ pub async fn crawl_job(
 /// Sample capture:
 /// <a href="https://kennethreitz.org" target="_blank"> => https://github.com/requests/httpbin
 /// For now, instead of capturing bad addresses in the Regex, we will just let the request fail.
-fn find_urls(html_body: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn find_urls(html_body: &str) -> Result<Vec<String>, CrawlError> {
     // Safe to unwrap here since the string is compiled into the binary, a runtime panic would be
     // very unexpected.
     // Use a non-greedy match so we capture what is the href value.

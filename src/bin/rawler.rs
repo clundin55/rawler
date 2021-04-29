@@ -1,11 +1,11 @@
-use rawler::{crawl, CrawlDepth};
+use rawler::{crawl, CrawlDepth, CrawlError};
 use std::time::Duration;
 use url::Url;
 
 use clap::{value_t, App, Arg};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), CrawlError> {
     let matches = App::new("Rawler")
         .version("1.0")
         .author("Carl Lundin <carllundin55@gmail.com>")
